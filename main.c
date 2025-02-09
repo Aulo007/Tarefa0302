@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include <string.h>
 #include "pico/stdlib.h"
 #include "hardware/i2c.h"
 #include "bibliotecas/matrizRGB.h"
@@ -16,17 +17,21 @@ const uint BUTTON1_PIN = 5; // Define o botão 1 como pino 5
 const uint BUTTON2_PIN = 6; // Define o botão 2 como pino 6
 
 // Definindo constantes para os parâmetros do I2C e do display
-const uint I2C_PORT = i2c1;
-const uint I2C_SDA = 14;
-const uint I2C_SCL = 15;
-const uint endereco = 0x3C;
+#define I2C_PORT i2c1
+#define I2C_SDA 14
+#define I2C_SCL 15
+#define endereco 0x3C
 
 // Definição de variáveis globais
 
-static volatile int num;           // Variável global para definir qual número selecionar na matriz
-static volatile int num1 = 1;      // Variável global para testar doubounce
-static volatile int num2 = 1;      // Variável global para testar doubounce
-static volatile int last_time = 0; // Variável global para amarzenar o tempo do último evento
+static volatile int num;                       // Variável global para definir qual número selecionar na matriz
+static volatile int num1 = 1;                  // Variável global para testar doubounce
+static volatile int num2 = 1;                  // Variável global para testar doubounce
+static volatile int last_time = 0;             // Variável global para amarzenar o tempo do último evento
+static volatile bool estado_led_green = false; // Varuável global para amazenar o estado do led verde
+static volatile bool estado_led_blue = false;  // Variável global para amarzenar o estado do led azul
+
+static ssd1306_t ssd; // Variável global para o display
 
 static void gpio_irq_handle(uint gpio, uint32_t events);
 
@@ -36,6 +41,8 @@ int main()
     stdio_init_all();
 
     gpio_init(LED_RED_PIN);
+    gpio_init(LED_GREEN_PIN);
+    gpio_init(LED_BLUE_PIN);
     gpio_init(BUTTON1_PIN);
     gpio_init(BUTTON2_PIN);
 
@@ -46,6 +53,8 @@ int main()
     // Confira direção dos pinos (Entrada ou saída)
 
     gpio_set_dir(LED_RED_PIN, GPIO_OUT);
+    gpio_set_dir(LED_GREEN_PIN, GPIO_OUT);
+    gpio_set_dir(LED_BLUE_PIN, GPIO_OUT);
     gpio_set_dir(BUTTON1_PIN, GPIO_IN);
     gpio_set_dir(BUTTON2_PIN, GPIO_IN);
 
@@ -68,8 +77,7 @@ int main()
     gpio_pull_up(I2C_SDA);                     // Ativa o pull-up no pino de dados
     gpio_pull_up(I2C_SCL);                     // Ativa o pull-up no pino de clock
 
-    // Inicialização e configuração do display SSD1306
-    ssd1306_t ssd;                                                // Cria a estrutura do display
+    // Inicialização e configuração do display SSD1306                                               // Cria a estrutura do display
     ssd1306_init(&ssd, WIDTH, HEIGHT, false, endereco, I2C_PORT); // Inicializa o display com as especificações fornecidas
     ssd1306_config(&ssd);                                         // Configura os parâmetros do display
     ssd1306_send_data(&ssd);                                      // Envia os dados iniciais de configuração para o display
@@ -80,28 +88,40 @@ int main()
 
     // Loop principal
 
+    int charInt = 0;
+
     while (true)
     {
-        display_menu();
+        if (stdio_usb_connected())
+        { // Certifica-se de que o USB está conectado
+            char cmd;
+            printf("Digite uma letra ou número: \n");
+            if (scanf(" %c", &cmd) == 1)
+            { // Lê um caractere da entrada padrão
 
-        char cmd = getchar(); // Aguarda entrada do usuário
-        printf("Comando recebido: %c\n\r", cmd);
-
-        switch (cmd)
-        {
-        case '1':
-            break;
-
-        case '2':
-
-
-
-        default:
-            printf("Comando invalido!\n\r");
-            break;
+                if (cmd >= '0' && cmd <= '9')
+                {
+                    ssd1306_fill(&ssd, false);
+                    printf("Você digitou um número: %c\n", cmd);
+                    charInt = cmd - '0'; // Converte de char para int
+                    setMatrizDeLEDSComIntensidade(caixa_de_desenhos[charInt], 0.007, 0.007, 0.007);
+                    ssd1306_draw_char(&ssd, cmd, 50, 50);
+                    ssd1306_send_data(&ssd); // Atualiza o display
+                }
+                else if ((cmd >= 'A' && cmd <= 'Z') || (cmd >= 'a' && cmd <= 'z'))
+                {
+                    ssd1306_fill(&ssd, false);
+                    printf("Você digitou uma letra: %c\n", cmd);
+                    ssd1306_draw_char(&ssd, cmd, 50, 50);
+                    ssd1306_send_data(&ssd); // Atualiza o display
+                }
+                else
+                {
+                    ssd1306_fill(&ssd, false);
+                    printf("Caractere inválido\n");
+                }
+            }
         }
-
-        sleep_ms(500); // Pequeno delay entre comandos
     }
 }
 
@@ -118,28 +138,52 @@ static void gpio_irq_handle(uint gpio, uint32_t events)
     if (current_time_us - last_time > 200000) // 200 ms de doboucing
     {
         last_time = current_time_us; // atualiza o tempo do último evento.
-        if (num >= 0 && num <= 9)
+
+        if (gpio == BUTTON1_PIN)
         {
-            if (gpio == BUTTON1_PIN)
+            if (estado_led_green == false)
             {
-                /* Ternário (Condição ? valor se verdadeiro: valor se falso), atribui valor a variável volátil num
-                   Se o número for menor que 9 ele incrementa o num em 1, se não, faz o valor permanecer em 9 */
-
-                num = (num < 9) ? num + 1 : 9;
+                ssd1306_fill(&ssd, false);
+                estado_led_green = true;
+                gpio_put(LED_GREEN_PIN, true);
+                printf("Led verde ligado");
+                ssd1306_draw_string(&ssd, "Led verde", 20, 30); // Desenha uma string
+                ssd1306_draw_string(&ssd, "ligado", 15, 48);    // Desenha uma string
+                ssd1306_send_data(&ssd);                        // Atualiza o display
             }
-            else if (gpio == BUTTON2_PIN)
+            else
             {
-                /* Ternário (Condição ? valor se verdadeiro: valor se falso), atribui valor a variável volátil num
-                  Se o número for maior que 0 ele decrementa o num em 1, se não, faz o valor permanecer em 0 */
-                num = (num > 0) ? num - 1 : 0;
+                ssd1306_fill(&ssd, false);
+                estado_led_green = false;
+                gpio_put(LED_GREEN_PIN, false);
+                printf("Led verde desligado");
+                ssd1306_draw_string(&ssd, "Led verde", 20, 30); // Desenha uma string
+                ssd1306_draw_string(&ssd, "desligado", 15, 48); // Desenha uma string
+                ssd1306_send_data(&ssd);
             }
-
-            // Print para mostrar quantas vezes eu apertei o botão na plaquinha e realmente rodou o código
-            printf("O botão foi realmente apertado: %d \n", num2);
-            num2++;
-
-            // Escreve desenho atual na plaquinha, os três parâmetro são sobre a intensidade
-            setMatrizDeLEDSComIntensidade(caixa_de_desenhos[num], 0.007, 0.007, 0.007);
+        }
+        else if (gpio == BUTTON2_PIN)
+        {
+            if (estado_led_blue == false)
+            {
+                ssd1306_fill(&ssd, false);
+                estado_led_blue = true;
+                gpio_put(LED_BLUE_PIN, true);
+                printf("Led azul ligado");
+                ssd1306_draw_string(&ssd, "Led azul", 20, 30); // Desenha uma string
+                ssd1306_draw_string(&ssd, "ligado", 15, 48);   // Desenha uma string
+                ssd1306_send_data(&ssd);
+            }
+            else
+            {
+                ssd1306_fill(&ssd, false);
+                estado_led_blue = false;
+                gpio_put(LED_BLUE_PIN, false);
+                printf("Led azul desligado");
+                ssd1306_draw_string(&ssd, "Led azul", 20, 30);  // Desenha uma string
+                ssd1306_draw_string(&ssd, "desligado", 15, 48); // Desenha uma string
+                ssd1306_send_data(&ssd);
+            }
         }
     }
 }
